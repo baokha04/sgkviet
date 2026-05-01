@@ -1,0 +1,56 @@
+-- Migration: init_schema
+-- Created at: 2026-05-01
+
+CREATE TABLE book (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title VARCHAR(512) NOT NULL,
+    unsigned_title VARCHAR(512),
+    description TEXT,
+    url TEXT,
+    deleted BOOLEAN DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE book_page (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL,
+    page_number INTEGER NOT NULL,
+    image_url TEXT,
+    ocr_process_id INTEGER,
+    deleted BOOLEAN DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (book_id) REFERENCES book(id)
+);
+
+CREATE TABLE ocr_process (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_page_id INTEGER NOT NULL,
+    markdown TEXT,
+    status VARCHAR(64) NOT NULL,
+    deleted BOOLEAN DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (book_page_id) REFERENCES book_page(id)
+);
+
+CREATE TABLE ocr_fail (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_page_id INTEGER,
+    reason TEXT,
+    deleted BOOLEAN DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (book_page_id) REFERENCES book_page(id)
+);
+
+CREATE TABLE config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key VARCHAR(255) NOT NULL,
+    value TEXT,
+    active BOOLEAN DEFAULT TRUE,
+    deleted BOOLEAN DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
