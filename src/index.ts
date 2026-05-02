@@ -34,6 +34,7 @@ const BookPageSchema = z.object({
   book_id: z.number(),
   page_number: z.number(),
   image_url: z.string().nullable().optional(),
+  html_content: z.string().nullable().optional(),
   ocr_process_id: z.number().nullable().optional(),
   deleted: z.boolean().optional(),
   created_at: z.string().optional(),
@@ -473,18 +474,15 @@ app.openapi(
   }),
   async (c) => {
     const { url } = await c.req.json();
-    const splitUrl = url?.split('#') || [];
-    const fragment = splitUrl[1] || '';
-    const pageMatch = fragment.match(/page=(\d+)/);
-    const currentPage = pageMatch ? parseInt(pageMatch[1], 10) : 1;
+    const baseUrl = url?.split('#')[0] || url;
     let book = await c.env.DB.prepare(
       'SELECT * FROM book WHERE url = ? AND deleted = 0'
     )
-      .bind(splitUrl[0])
+      .bind(baseUrl)
       .first<any>();
     // Fetch and parse the HTML
-    const html = await fetchBookPage(url);
-    const { title, totalPages, images } = parseBookData(html, currentPage);
+    const html = await fetchBookPage(baseUrl);
+    const { title, totalPages, images } = parseBookData(html);
     const unsignedTitle = toNonAccentVietnamese(title);
 
     // Upsert book by URL
@@ -505,25 +503,26 @@ app.openapi(
       book = await c.env.DB.prepare(
         'INSERT INTO book (title, unsigned_title, url, total_pages) VALUES (?, ?, ?, ?) RETURNING *'
       )
-        .bind(title, unsignedTitle, splitUrl[0], totalPages)
+        .bind(title, unsignedTitle, baseUrl, totalPages)
         .first<any>();
     }
 
-    // Insert book pages
+    // Insert book pages (index 0 = cover, index N = page N)
     let pagesInserted = 0;
-    for (const img of images) {
+    for (let i = 0; i < images.length; i++) {
+      const pageNumber = i;
       // Skip if page already exists for this book
       const existing = await c.env.DB.prepare(
         'SELECT id FROM book_page WHERE book_id = ? AND page_number = ? AND deleted = 0'
       )
-        .bind(book.id, img.pageNumber)
+        .bind(book.id, pageNumber)
         .first();
 
       if (!existing) {
         await c.env.DB.prepare(
           'INSERT INTO book_page (book_id, page_number, image_url) VALUES (?, ?, ?)'
         )
-          .bind(book.id, img.pageNumber, img.imageUrl)
+          .bind(book.id, pageNumber, images[i])
           .run();
         pagesInserted++;
       }

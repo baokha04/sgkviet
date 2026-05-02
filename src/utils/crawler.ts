@@ -1,5 +1,3 @@
-const PAGES_TO_PICK = 2;
-
 /**
  * Fetches the raw HTML from a given URL.
  * @param url The URL to fetch
@@ -24,15 +22,12 @@ export async function fetchBookPage(url: string): Promise<string> {
  * Parses HTML from taphuan.nxbgd.vn to extract book data.
  * Collects all cdn3.olm.vn image URLs into an ordered array
  * (index 0 = cover, index N = page N), then picks images
- * starting from currentPage.
+ * in the range [fromPage, toPage].
  */
-export function parseBookData(
-  html: string,
-  currentPage: number
-): {
+export function parseBookData(html: string): {
   title: string;
   totalPages: number;
-  images: { pageNumber: number; imageUrl: string }[];
+  images: string[];
 } {
   // Extract title from <title> tag, strip " - Thư viện số" suffix
   const titleMatch = html.match(/<title>([^<]+)<\/title>/);
@@ -52,19 +47,6 @@ export function parseBookData(
     allImages.push(match[1]);
   }
 
-  // Pick images dynamically based on currentPage
-  // e.g. currentPage=3 → indices [3, 4] → page 3 and page 4
-  const images: { pageNumber: number; imageUrl: string }[] = [];
-  for (let i = 0; i < PAGES_TO_PICK; i++) {
-    const idx = currentPage + i;
-    if (idx < allImages.length) {
-      images.push({
-        pageNumber: currentPage + i,
-        imageUrl: allImages[idx]
-      });
-    }
-  }
-
-  return { title, totalPages, images };
+  return { title, totalPages, images: allImages };
 }
 
