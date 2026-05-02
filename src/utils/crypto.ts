@@ -10,16 +10,16 @@ const IV_LENGTH = 8; // 3DES IV size is 8 bytes
  * @returns Encrypted text in "iv:ciphertext" hex format
  */
 export function encrypt(text: string, key: string): string {
-	// Key must be 24 bytes for 3DES
-	const paddedKey = Buffer.alloc(24, 0);
-	paddedKey.write(key, 0, 'utf8');
+  // Key must be 24 bytes for 3DES
+  const paddedKey = Buffer.alloc(24, 0);
+  paddedKey.write(key, 0, 'utf8');
 
-	const iv = crypto.randomBytes(IV_LENGTH);
-	const cipher = crypto.createCipheriv(ALGORITHM, paddedKey, iv);
-	let encrypted = cipher.update(text, 'utf8', 'hex');
-	encrypted += cipher.final('hex');
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, paddedKey, iv);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
 
-	return iv.toString('hex') + ':' + encrypted;
+  return iv.toString('hex') + ':' + encrypted;
 }
 
 /**
@@ -29,17 +29,17 @@ export function encrypt(text: string, key: string): string {
  * @returns Decrypted plain text
  */
 export function decrypt(encryptedData: string, key: string): string {
-	const [ivHex, encryptedText] = encryptedData.split(':');
-	if (!ivHex || !encryptedText) {
-		throw new Error('Invalid encrypted data format');
-	}
+  const [ivHex, encryptedText] = encryptedData.split(':');
+  if (!ivHex || !encryptedText) {
+    throw new Error('Invalid encrypted data format');
+  }
 
-	const paddedKey = Buffer.alloc(24, 0);
-	paddedKey.write(key, 0, 'utf8');
+  const paddedKey = Buffer.alloc(24, 0);
+  paddedKey.write(key, 0, 'utf8');
 
-	const iv = Buffer.from(ivHex, 'hex');
-	const decipher = crypto.createDecipheriv(ALGORITHM, paddedKey, iv);
-	let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-	decrypted += decipher.final('utf8');
-	return decrypted;
+  const iv = Buffer.from(ivHex, 'hex');
+  const decipher = crypto.createDecipheriv(ALGORITHM, paddedKey, iv);
+  let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
 }
