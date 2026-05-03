@@ -6,10 +6,11 @@ This document provides a high-level overview of the SGKViet project for AI agent
 
 | Action | Command |
 | :--- | :--- |
-| **Development** | `npm run dev` |
-| **Deploy** | `npm run deploy` |
-| **Local Migrations** | `npm run db:migrate:local` |
-| **Remote Migrations** | `npm run db:migrate:remote` |
+| **Development** | `npm run dev` or `pnpm run dev` |
+| **Deploy** | `npm run deploy` or `pnpm run deploy` |
+| **Local Migrations** | `npm run db:migrate:local` or `pnpm run db:migrate:local` |
+| **Remote Migrations** | `npm run db:migrate:remote` or `pnpm run db:migrate:remote` |
+| **Test** | `npm run test` or `pnpm run test` |
 
 ## 🏗 Architecture & Structure
 
@@ -18,6 +19,8 @@ The project is a Cloudflare Workers application built with Hono and D1 Database.
 ### Subprojects & Key Files
 - `src/index.ts`: Main entry point. Defines Hono app, Zod schemas, and API routes.
 - `src/utils/crypto.ts`: Cryptography utilities (3DES) for sensitive configuration data.
+- `src/utils/crawler.ts`: Utilities for fetching and parsing book data (HTML, images, total pages).
+- `src/utils/string.ts`: String manipulation utilities (e.g., generating non-accented Vietnamese strings).
 - `migrations/`: D1 database schema definitions.
 - `wrangler.jsonc`: Cloudflare Workers configuration.
 
@@ -39,6 +42,7 @@ The project is a Cloudflare Workers application built with Hono and D1 Database.
 | `GET` | `/ocr_fails` | List all non-deleted OCR failures. |
 | `POST` | `/ocr_fails` | Create a new OCR failure record. |
 | `DELETE` | `/ocr_fails/{id}` | Soft delete an OCR failure record. |
+| `POST` | `/crawl` | Crawl a book URL, parse metadata, and store its pages. |
 | `GET` | `/doc` | OpenAPI JSON specification. |
 | `GET` | `/swagger` | Swagger UI documentation. |
 
@@ -60,6 +64,7 @@ The project is a Cloudflare Workers application built with Hono and D1 Database.
   - Database tables/columns: `snake_case`.
   - TypeScript variables/functions: `camelCase`.
   - Zod schemas: `PascalCase` ending in `Schema` (e.g., `BookSchema`).
+- **Error Handling**: Standard HTTP status codes (200, 201) for success. Validation errors are handled automatically by `zod-openapi`.
 
 ## 🗺 Architecture Workflow
 
@@ -70,11 +75,13 @@ graph TD
     Handler -->|Schema Validation| Zod[Zod / OpenAPI]
     Handler -->|Query| D1[D1 Database]
     Handler -->|Crypto Utilities| Crypto[3DES Encryption]
+    Handler -->|Crawler| Crawler[HTML Fetch & Parse]
     D1 -.->|SQL Results| Handler
     Handler -->|JSON Response| Client
 
     subgraph "Internal Services"
         Crypto
+        Crawler
     end
 
     subgraph "Storage"

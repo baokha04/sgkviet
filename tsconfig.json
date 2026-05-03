@@ -3,12 +3,12 @@
     "target": "esnext",
     "module": "esnext",
     "lib": ["esnext"],
-    "types": ["node"],
-    "moduleResolution": "node",
+    "types": ["@cloudflare/workers-types", "node"],
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "worker-configuration.d.ts"]
 }

@@ -3,6 +3,7 @@ import { swaggerUI } from '@hono/swagger-ui';
 import { encrypt, decrypt } from './utils/crypto';
 import { fetchBookPage, parseBookData } from './utils/crawler';
 import { toNonAccentVietnamese } from './utils/string';
+import { processImagesWithOpenRouter } from './utils/ocr';
 
 export interface Env {
   DB: D1Database;
@@ -86,8 +87,8 @@ app.openapi(
   async (c) => {
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM book WHERE deleted = 0'
-    ).all();
-    return c.json(results);
+    ).all<any>();
+    return c.json(results as any, 200);
   }
 );
 
@@ -117,7 +118,12 @@ app.openapi(
         body.url || null
       )
       .first();
-    return c.json(result, 201);
+
+    if (!result) {
+      throw new Error('Failed to create book');
+    }
+
+    return c.json(result as any, 201);
   }
 );
 
@@ -163,7 +169,7 @@ app.openapi(
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM config WHERE deleted = 0'
     ).all<any>();
-    const decryptedResults = results.map((row) => ({
+    const decryptedResults = results.map((row: any) => ({
       ...row,
       value: row.value
         ? decrypt(
@@ -172,7 +178,7 @@ app.openapi(
           )
         : row.value
     }));
-    return c.json(decryptedResults);
+    return c.json(decryptedResults as any, 200);
   }
 );
 
@@ -203,7 +209,56 @@ app.openapi(
     )
       .bind(body.key, encryptedValue, body.active ?? true)
       .first();
-    return c.json(result, 201);
+
+    if (!result) {
+      throw new Error('Failed to create config');
+    }
+
+    return c.json(result as any, 201);
+  }
+);
+
+app.openapi(
+  createRoute({
+    method: 'put',
+    path: '/configs/{id}',
+    request: {
+      params: IdSchema,
+      body: { content: { 'application/json': { schema: ConfigSchema } } }
+    },
+    responses: {
+      200: {
+        content: { 'application/json': { schema: ConfigSchema } },
+        description: 'Update config (encrypted)'
+      },
+      404: {
+        content: {
+          'application/json': { schema: z.object({ error: z.string() }) }
+        },
+        description: 'Config not found'
+      }
+    }
+  }),
+  async (c) => {
+    const { id } = c.req.valid('param');
+    const body = await c.req.json();
+    const encryptedValue = body.value
+      ? encrypt(
+          body.value,
+          c.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
+        )
+      : null;
+    const result = await c.env.DB.prepare(
+      'UPDATE config SET key = ?, value = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0 RETURNING *'
+    )
+      .bind(body.key, encryptedValue, body.active ?? true, id)
+      .first();
+
+    if (!result) {
+      return c.json({ error: 'Config not found' }, 404);
+    }
+
+    return c.json(result as any, 200);
   }
 );
 
@@ -249,8 +304,8 @@ app.openapi(
   async (c) => {
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM book_page WHERE deleted = 0'
-    ).all();
-    return c.json(results);
+    ).all<any>();
+    return c.json(results as any, 200);
   }
 );
 app.openapi(
@@ -279,7 +334,12 @@ app.openapi(
         body.ocr_process_id || null
       )
       .first();
-    return c.json(result, 201);
+
+    if (!result) {
+      throw new Error('Failed to create book page');
+    }
+
+    return c.json(result as any, 201);
   }
 );
 app.openapi(
@@ -322,8 +382,8 @@ app.openapi(
   async (c) => {
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM ocr_process WHERE deleted = 0'
-    ).all();
-    return c.json(results);
+    ).all<any>();
+    return c.json(results as any, 200);
   }
 );
 app.openapi(
@@ -347,7 +407,12 @@ app.openapi(
     )
       .bind(body.book_page_id, body.markdown || null, body.status)
       .first();
-    return c.json(result, 201);
+
+    if (!result) {
+      throw new Error('Failed to create OCR process');
+    }
+
+    return c.json(result as any, 201);
   }
 );
 app.openapi(
@@ -390,8 +455,8 @@ app.openapi(
   async (c) => {
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM ocr_fail WHERE deleted = 0'
-    ).all();
-    return c.json(results);
+    ).all<any>();
+    return c.json(results as any, 200);
   }
 );
 app.openapi(
@@ -415,7 +480,12 @@ app.openapi(
     )
       .bind(body.book_page_id || null, body.reason || null)
       .first();
-    return c.json(result, 201);
+
+    if (!result) {
+      throw new Error('Failed to create OCR fail record');
+    }
+
+    return c.json(result as any, 201);
   }
 );
 app.openapi(
@@ -456,6 +526,12 @@ const CrawlResponseSchema = z.object({
     total_pages: z.number()
   }),
   pages_inserted: z.number()
+});
+
+const OcrProcessBatchResponseSchema = z.object({
+  processed_pages: z.number(),
+  success_count: z.number(),
+  failure_count: z.number()
 });
 
 app.openapi(
@@ -532,6 +608,121 @@ app.openapi(
       book: { id: book.id, title: book.title, total_pages: totalPages },
       pages_inserted: pagesInserted
     });
+  }
+);
+
+// --- OCR Process Batch Route ---
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/ocr/process-batch',
+    responses: {
+      200: {
+        content: {
+          'application/json': { schema: OcrProcessBatchResponseSchema }
+        },
+        description: 'Process a batch of images for OCR'
+      },
+      500: {
+        content: {
+          'application/json': { schema: z.object({ error: z.string() }) }
+        },
+        description: 'Server error'
+      }
+    }
+  }),
+  async (c) => {
+    // 1. Fetch config
+    const { results: configs } = await c.env.DB.prepare(
+      "SELECT * FROM config WHERE key IN ('OPENROUTER_API_KEY', 'AI_MODEL') AND active = 1 AND deleted = 0"
+    ).all<any>();
+
+    let apiKey = '';
+    let model = '';
+
+    for (const config of configs) {
+      if (config.key === 'OPENROUTER_API_KEY' && config.value) {
+        apiKey = decrypt(
+          config.value,
+          c.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
+        );
+      } else if (config.key === 'AI_MODEL' && config.value) {
+        model = decrypt(
+          config.value,
+          c.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
+        );
+      }
+    }
+
+    if (!apiKey || !model) {
+      return c.json(
+        { error: 'Missing OPENROUTER_API_KEY or AI_MODEL config' },
+        500
+      );
+    }
+
+    // 2. Query pending pages
+    const { results: pendingPages } = await c.env.DB.prepare(
+      'SELECT id, image_url FROM book_page WHERE ocr_process_id IS NULL AND image_url IS NOT NULL AND deleted = 0 LIMIT 5'
+    ).all<any>();
+
+    if (pendingPages.length === 0) {
+      return c.json(
+        { processed_pages: 0, success_count: 0, failure_count: 0 },
+        200
+      );
+    }
+
+    // 3. Process
+    const pagesPayload = pendingPages.map((p: any) => ({
+      id: p.id,
+      imageUrl: p.image_url
+    }));
+
+    const results = await processImagesWithOpenRouter(
+      pagesPayload,
+      apiKey,
+      model
+    );
+
+    let successCount = 0;
+    let failureCount = 0;
+
+    for (const result of results) {
+      if (result.status === 'success') {
+        const ocrProcess = await c.env.DB.prepare(
+          'INSERT INTO ocr_process (book_page_id, markdown, status) VALUES (?, ?, ?) RETURNING id'
+        )
+          .bind(result.id, result.markdown, 'success')
+          .first<any>();
+
+        if (ocrProcess) {
+          await c.env.DB.prepare(
+            'UPDATE book_page SET ocr_process_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          )
+            .bind(ocrProcess.id, result.id)
+            .run();
+          successCount++;
+        }
+      } else {
+        await c.env.DB.prepare(
+          'INSERT INTO ocr_fail (book_page_id, reason) VALUES (?, ?)'
+        )
+          .bind(result.id, result.error || 'Unknown error')
+          .run();
+        failureCount++;
+      }
+    }
+
+    return c.json(
+      {
+        processed_pages: pendingPages.length,
+        success_count: successCount,
+        failure_count: failureCount
+      },
+      200
+    );
   }
 );
 
