@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { Env } from '../types';
 import { IdSchema } from '../common/schema';
-import { ConfigSchema } from './schema';
+import { ConfigSchema, KeySchema } from './schema';
 import { ConfigsService } from './service';
 
 const configsRoute = new OpenAPIHono<{ Bindings: Env }>();
@@ -21,6 +21,37 @@ configsRoute.openapi(
     const service = new ConfigsService(c.env);
     const results = await service.findAll();
     return c.json(results as any, 200);
+  }
+);
+
+configsRoute.openapi(
+  createRoute({
+    method: 'get',
+    path: '/key/{key}',
+    request: { params: KeySchema },
+    responses: {
+      200: {
+        content: { 'application/json': { schema: ConfigSchema } },
+        description: 'Get config by key (encrypted)'
+      },
+      404: {
+        content: {
+          'application/json': { schema: z.object({ error: z.string() }) }
+        },
+        description: 'Config not found'
+      }
+    }
+  }),
+  async (c) => {
+    const { key } = c.req.valid('param');
+    const service = new ConfigsService(c.env);
+    const result = await service.findByKey(key);
+
+    if (!result) {
+      return c.json({ error: 'Config not found' }, 404);
+    }
+
+    return c.json(result as any, 200);
   }
 );
 

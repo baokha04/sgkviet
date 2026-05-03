@@ -8,16 +8,18 @@ export class ConfigsService {
     const { results } = await this.env.DB.prepare(
       'SELECT * FROM config WHERE deleted = 0'
     ).all<any>();
-    const decryptedResults = results.map((row: any) => ({
-      ...row,
-      value: row.value
-        ? decrypt(
-            row.value,
-            this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
-          )
-        : row.value
-    }));
-    return decryptedResults;
+
+    return results;
+  }
+
+  async findByKey(key: string) {
+    const result = await this.env.DB.prepare(
+      'SELECT * FROM config WHERE key = ? AND deleted = 0'
+    )
+      .bind(key)
+      .first<any>();
+
+    return result;
   }
 
   async create(data: { key: string; value?: string | null; active?: boolean }) {
@@ -40,7 +42,10 @@ export class ConfigsService {
     return result;
   }
 
-  async update(id: string, data: { key: string; value?: string | null; active?: boolean }) {
+  async update(
+    id: string,
+    data: { key: string; value?: string | null; active?: boolean }
+  ) {
     const encryptedValue = data.value
       ? encrypt(
           data.value,
@@ -64,3 +69,4 @@ export class ConfigsService {
       .run();
   }
 }
+

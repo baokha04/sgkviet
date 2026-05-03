@@ -9,3 +9,8 @@ export const ConfigSchema = z.object({
   created_at: z.string().optional(),
   updated_at: z.string().optional()
 });
+
+export const KeySchema = z.object({
+  key: z.string().openapi({ param: { name: 'key', in: 'path' }, example: 'MY_KEY' })
+});
+

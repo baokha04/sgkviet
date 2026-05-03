@@ -31,6 +31,7 @@ The project is a Cloudflare Workers application built with Hono and D1 Database.
 | `POST` | `/books` | Create a new book. |
 | `DELETE` | `/books/{id}` | Soft delete a book. |
 | `GET` | `/configs` | List all non-deleted configs (decrypted). |
+| `GET` | `/configs/key/{key}` | Get a single config by its key (encrypted value). |
 | `POST` | `/configs` | Create a new config (encrypted). |
 | `DELETE` | `/configs/{id}` | Soft delete a config. |
 | `GET` | `/book_pages` | List all non-deleted book pages. Supports filtering by `book_id`, `from_page`, `to_page`. |
