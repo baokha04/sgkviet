@@ -2,6 +2,9 @@ import { Env } from '../types';
 import { decrypt } from '../utils/crypto';
 import { processImagesWithOpenRouter } from '../utils/ocr';
 import { reviewVietnameseMarkdown } from '../utils/vietnamese';
+import { generateEmbedding, generateBatchEmbeddings } from '../utils/embeddings';
+import { VectorService } from './vector_service';
+import { OcrProcess, Config, BookPage } from '../db/types';
 
 export class OcrProcessesService {
   constructor(private env: Env) {}
@@ -9,14 +12,14 @@ export class OcrProcessesService {
   async findAll() {
     const { results } = await this.env.DB.prepare(
       'SELECT * FROM ocr_process WHERE deleted = 0'
-    ).all<any>();
+    ).all<OcrProcess>();
     return results;
   }
 
   private async getAiConfig() {
     const { results: configs } = await this.env.DB.prepare(
       "SELECT * FROM config WHERE key IN ('OPENROUTER_API_KEY', 'AI_MODEL', 'CF_AI_MODEL') AND active = 1 AND deleted = 0"
-    ).all<any>();
+    ).all<Config>();
 
     let apiKey = '';
     let model = '';
@@ -63,10 +66,24 @@ export class OcrProcessesService {
       'INSERT INTO ocr_process (book_page_id, markdown, status, review) VALUES (?, ?, ?, ?) RETURNING *'
     )
       .bind(data.book_page_id, data.markdown || null, data.status, review)
-      .first();
+      .first<OcrProcess>();
 
     if (!result) {
       throw new Error('Failed to create OCR process');
+    }
+
+    // Index in Vectorize
+    if (result.status === 'success' && result.markdown) {
+      try {
+        const vectorService = new VectorService(this.env.VECTOR_INDEX);
+        const embedding = await generateEmbedding(this.env.AI, result.markdown);
+        await vectorService.upsert(result.id.toString(), embedding, {
+          book_page_id: result.book_page_id,
+          markdown: result.markdown
+        });
+      } catch (error) {
+        console.error('Failed to index in Vectorize:', error);
+      }
     }
 
     return result;
@@ -94,7 +111,20 @@ export class OcrProcessesService {
       'UPDATE ocr_process SET book_page_id = ?, markdown = ?, status = ?, review = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0 RETURNING *'
     )
       .bind(data.book_page_id, data.markdown || null, data.status, review, id)
-      .first();
+      .first<OcrProcess>();
+
+    if (result && result.status === 'success' && result.markdown) {
+      try {
+        const vectorService = new VectorService(this.env.VECTOR_INDEX);
+        const embedding = await generateEmbedding(this.env.AI, result.markdown);
+        await vectorService.upsert(result.id.toString(), embedding, {
+          book_page_id: result.book_page_id,
+          markdown: result.markdown
+        });
+      } catch (error) {
+        console.error('Failed to index in Vectorize:', error);
+      }
+    }
 
     return result;
   }
@@ -105,6 +135,14 @@ export class OcrProcessesService {
     )
       .bind(id)
       .run();
+
+    // Remove from Vectorize
+    try {
+      const vectorService = new VectorService(this.env.VECTOR_INDEX);
+      await vectorService.delete([id]);
+    } catch (error) {
+      console.error('Failed to delete from Vectorize:', error);
+    }
   }
 
   async upsertByBookPageId(data: {
@@ -143,7 +181,7 @@ export class OcrProcessesService {
 
     const { results } = await this.env.DB.prepare(query)
       .bind(...params)
-      .all<any>();
+      .all<OcrProcess>();
     const config = await this.getAiConfig();
 
     let updatedCount = 0;
@@ -176,7 +214,7 @@ export class OcrProcessesService {
     // 2. Query pending pages
     const { results: pendingPages } = await this.env.DB.prepare(
       'SELECT id, image_url FROM book_page WHERE ocr_process_id IS NULL AND image_url IS NOT NULL AND deleted = 0 LIMIT 5'
-    ).all<any>();
+    ).all<BookPage>();
 
     if (pendingPages.length === 0) {
       return { processed_pages: 0, success_count: 0, failure_count: 0 };
@@ -210,7 +248,7 @@ export class OcrProcessesService {
           'INSERT INTO ocr_process (book_page_id, markdown, status, review) VALUES (?, ?, ?, ?) RETURNING id'
         )
           .bind(result.id, result.markdown, 'success', review)
-          .first<any>();
+          .first<OcrProcess>();
 
         if (ocrProcess) {
           await this.env.DB.prepare(
@@ -235,6 +273,44 @@ export class OcrProcessesService {
       success_count: successCount,
       failure_count: failureCount
     };
+  }
+
+  async reindexAll() {
+    const { results } = await this.env.DB.prepare(
+      'SELECT id, book_page_id, markdown FROM ocr_process WHERE status = "success" AND markdown IS NOT NULL AND deleted = 0'
+    ).all<OcrProcess>();
+
+    const vectorService = new VectorService(this.env.VECTOR_INDEX);
+    let indexedCount = 0;
+    const batchSize = 50;
+
+    for (let i = 0; i < results.length; i += batchSize) {
+      const batch = results.slice(i, i + batchSize);
+      const texts = batch.map(r => r.markdown || '');
+      
+      try {
+        const embeddings = await generateBatchEmbeddings(this.env.AI, texts);
+        
+        const vectors = batch.map((row, index) => {
+          const markdown = row.markdown || '';
+          return {
+            id: row.id.toString(),
+            values: embeddings[index],
+            metadata: {
+              book_page_id: row.book_page_id,
+              markdown: markdown.length > 8000 ? markdown.substring(0, 8000) + '...' : markdown
+            }
+          };
+        });
+
+        await this.env.VECTOR_INDEX.upsert(vectors);
+        indexedCount += batch.length;
+      } catch (error) {
+        console.error(`Failed to index batch starting at ${i}:`, error);
+      }
+    }
+
+    return { total: results.length, indexed: indexedCount };
   }
 }
 

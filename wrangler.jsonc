@@ -15,6 +15,12 @@
   "ai": {
     "binding": "AI"
   },
+  "vectorize": [
+    {
+      "binding": "VECTOR_INDEX",
+      "index_name": "sgkviet-index"
+    }
+  ],
 
   "observability": {
     "enabled": false,

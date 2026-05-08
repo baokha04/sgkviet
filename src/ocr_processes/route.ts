@@ -181,4 +181,26 @@ ocrProcessesRoute.openapi(
   }
 );
 
+ocrProcessesRoute.openapi(
+  createRoute({
+    method: 'post',
+    path: '/reindex',
+    responses: {
+      200: {
+        content: {
+          'application/json': {
+            schema: z.object({ total: z.number(), indexed: z.number() })
+          }
+        },
+        description: 'Reindex all OCR processes in Vectorize'
+      }
+    }
+  }),
+  async (c) => {
+    const service = new OcrProcessesService(c.env);
+    const result = await service.reindexAll();
+    return c.json(result, 200);
+  }
+);
+
 export { ocrProcessesRoute };
