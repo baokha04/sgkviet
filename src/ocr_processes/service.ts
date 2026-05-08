@@ -275,23 +275,49 @@ export class OcrProcessesService {
     };
   }
 
-  async reindexAll() {
-    const { results } = await this.env.DB.prepare(
-      'SELECT id, book_page_id, markdown FROM ocr_process WHERE status = "success" AND markdown IS NOT NULL AND deleted = 0'
-    ).all<OcrProcess>();
+  async reindexAll(fromId?: number, toId?: number) {
+    let query = 'SELECT id, book_page_id, markdown FROM ocr_process WHERE status = "success" AND markdown IS NOT NULL AND deleted = 0';
+    const params: any[] = [];
+
+    if (fromId !== undefined) {
+      if (toId !== undefined) {
+        query += ' AND id BETWEEN ? AND ?';
+        params.push(fromId, toId);
+      } else {
+        query += ' AND id = ?';
+        params.push(fromId);
+      }
+    }
+
+    const { results } = await this.env.DB.prepare(query).bind(...params).all<OcrProcess>();
 
     const vectorService = new VectorService(this.env.VECTOR_INDEX);
     let indexedCount = 0;
-    const batchSize = 50;
+    let skippedCount = 0;
+    const batchSize = 20;
 
     for (let i = 0; i < results.length; i += batchSize) {
       const batch = results.slice(i, i + batchSize);
-      const texts = batch.map(r => r.markdown || '');
+      const ids = batch.map(r => r.id.toString());
       
       try {
+        // 1. Check which IDs already exist in Vectorize
+        const existingVectors = await vectorService.getByIds(ids);
+        const existingIds = new Set(existingVectors.map(v => v.id));
+        
+        // 2. Filter out records that already exist
+        const missingBatch = batch.filter(r => !existingIds.has(r.id.toString()));
+        
+        if (missingBatch.length === 0) {
+          skippedCount += batch.length;
+          continue;
+        }
+
+        // 3. Process only missing records
+        const texts = missingBatch.map(r => r.markdown || '');
         const embeddings = await generateBatchEmbeddings(this.env.AI, texts);
         
-        const vectors = batch.map((row, index) => {
+        const vectors = missingBatch.map((row, index) => {
           const markdown = row.markdown || '';
           return {
             id: row.id.toString(),
@@ -304,13 +330,47 @@ export class OcrProcessesService {
         });
 
         await this.env.VECTOR_INDEX.upsert(vectors);
-        indexedCount += batch.length;
+        indexedCount += missingBatch.length;
+        skippedCount += (batch.length - missingBatch.length);
       } catch (error) {
-        console.error(`Failed to index batch starting at ${i}:`, error);
+        console.error(`Failed to process batch starting at ${i}:`, error);
       }
     }
 
-    return { total: results.length, indexed: indexedCount };
+    return { 
+      total: results.length, 
+      indexed: indexedCount, 
+      skipped: skippedCount 
+    };
+  }
+
+  async listVectors(limit: number = 10, cursor?: string) {
+    const offset = cursor ? parseInt(cursor) : 0;
+    
+    // Get IDs from D1 since Vectorize binding doesn't support listing yet
+    const { results } = await this.env.DB.prepare(
+      'SELECT id FROM ocr_process WHERE deleted = 0 LIMIT ? OFFSET ?'
+    )
+      .bind(limit, offset)
+      .all<any>();
+    
+    const ids = results.map(r => r.id.toString());
+    
+    if (ids.length === 0) {
+      return { items: [], nextCursor: undefined };
+    }
+    
+    const vectorService = new VectorService(this.env.VECTOR_INDEX);
+    const vectors = await vectorService.getByIds(ids);
+    
+    const nextCursor = results.length === limit ? (offset + limit).toString() : undefined;
+    
+    const items = vectors.map(v => ({
+      id: v.id,
+      metadata: v.metadata as any
+    }));
+    
+    return { items, nextCursor };
   }
 }
 

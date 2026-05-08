@@ -183,22 +183,83 @@ ocrProcessesRoute.openapi(
 
 ocrProcessesRoute.openapi(
   createRoute({
-    method: 'post',
-    path: '/reindex',
+    method: 'get',
+    path: '/vectors',
+    request: {
+      query: z.object({
+        limit: z.string().optional().default('10').openapi({ example: '10' }),
+        cursor: z.string().optional().openapi({ example: '...' })
+      })
+    },
     responses: {
       200: {
         content: {
           'application/json': {
-            schema: z.object({ total: z.number(), indexed: z.number() })
+            schema: z.object({
+              items: z.array(z.object({
+                id: z.string(),
+                metadata: z.object({
+                  book_page_id: z.number(),
+                  markdown: z.string()
+                })
+              })),
+              nextCursor: z.string().optional()
+            })
           }
         },
-        description: 'Reindex all OCR processes in Vectorize'
+        description: 'List vectors from the index'
       }
     }
   }),
   async (c) => {
+    try {
+      const { limit, cursor } = c.req.valid('query');
+      const service = new OcrProcessesService(c.env);
+      const result = await service.listVectors(parseInt(limit), cursor);
+      return c.json(result, 200);
+    } catch (e: any) {
+      console.error('Vector list error:', e);
+      return c.json({ error: e.message }, 500);
+    }
+  }
+);
+
+ocrProcessesRoute.openapi(
+  createRoute({
+    method: 'post',
+    path: '/reindex',
+    request: {
+      body: {
+        content: {
+          'application/json': {
+            schema: z.object({
+              from_id: z.number().optional().openapi({ example: 1 }),
+              to_id: z.number().optional().openapi({ example: 10 })
+            })
+          }
+        }
+      }
+    },
+    responses: {
+      200: {
+        content: {
+          'application/json': {
+            schema: z.object({ 
+              total: z.number(), 
+              indexed: z.number(),
+              skipped: z.number()
+            })
+          }
+        },
+        description: 'Reindex OCR processes in Vectorize'
+      }
+    }
+  }),
+  async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const { from_id, to_id } = body;
     const service = new OcrProcessesService(c.env);
-    const result = await service.reindexAll();
+    const result = await service.reindexAll(from_id, to_id);
     return c.json(result, 200);
   }
 );

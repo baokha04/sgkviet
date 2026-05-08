@@ -42,4 +42,8 @@ export class VectorService {
   async delete(ids: string[]) {
     await this.index.deleteByIds(ids);
   }
+
+  async getByIds(ids: string[]) {
+    return await this.index.getByIds(ids);
+  }
 }
