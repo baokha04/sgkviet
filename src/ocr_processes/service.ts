@@ -13,8 +13,52 @@ export class OcrProcessesService {
     return results;
   }
 
-  async create(data: { book_page_id: number; markdown?: string | null; status: string; review?: string | null; }) {
-    const review = data.review || (data.markdown ? reviewVietnameseMarkdown(data.markdown) : null);
+  private async getAiConfig() {
+    const { results: configs } = await this.env.DB.prepare(
+      "SELECT * FROM config WHERE key IN ('OPENROUTER_API_KEY', 'AI_MODEL', 'CF_AI_MODEL') AND active = 1 AND deleted = 0"
+    ).all<any>();
+
+    let apiKey = '';
+    let model = '';
+    let cfModel = '@cf/google/gemma-4-26b-a4b-it';
+
+    for (const config of configs) {
+      if (config.key === 'OPENROUTER_API_KEY' && config.value) {
+        apiKey = decrypt(
+          config.value,
+          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
+        );
+      } else if (config.key === 'AI_MODEL' && config.value) {
+        model = decrypt(
+          config.value,
+          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
+        );
+      } else if (config.key === 'CF_AI_MODEL' && config.value) {
+        cfModel = decrypt(
+          config.value,
+          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
+        );
+      }
+    }
+
+    return { apiKey, model, cfModel };
+  }
+
+  async create(data: {
+    book_page_id: number;
+    markdown?: string | null;
+    status: string;
+    review?: string | null;
+  }) {
+    let review = data.review;
+    if (!review && data.markdown) {
+      const config = await this.getAiConfig();
+      review = await reviewVietnameseMarkdown(
+        data.markdown,
+        this.env.AI,
+        config.cfModel
+      );
+    }
     const result = await this.env.DB.prepare(
       'INSERT INTO ocr_process (book_page_id, markdown, status, review) VALUES (?, ?, ?, ?) RETURNING *'
     )
@@ -28,8 +72,24 @@ export class OcrProcessesService {
     return result;
   }
 
-  async update(id: string, data: { book_page_id: number; markdown?: string | null; status: string; review?: string | null; }) {
-    const review = data.review || (data.markdown ? reviewVietnameseMarkdown(data.markdown) : null);
+  async update(
+    id: string,
+    data: {
+      book_page_id: number;
+      markdown?: string | null;
+      status: string;
+      review?: string | null;
+    }
+  ) {
+    let review = data.review;
+    if (!review && data.markdown) {
+      const config = await this.getAiConfig();
+      review = await reviewVietnameseMarkdown(
+        data.markdown,
+        this.env.AI,
+        config.cfModel
+      );
+    }
     const result = await this.env.DB.prepare(
       'UPDATE ocr_process SET book_page_id = ?, markdown = ?, status = ?, review = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0 RETURNING *'
     )
@@ -47,7 +107,12 @@ export class OcrProcessesService {
       .run();
   }
 
-  async upsertByBookPageId(data: { book_page_id: number; markdown?: string | null; status: string; review?: string | null; }) {
+  async upsertByBookPageId(data: {
+    book_page_id: number;
+    markdown?: string | null;
+    status: string;
+    review?: string | null;
+  }) {
     const existing = await this.env.DB.prepare(
       'SELECT id FROM ocr_process WHERE book_page_id = ? AND deleted = 0'
     )
@@ -62,7 +127,8 @@ export class OcrProcessesService {
   }
 
   async reviewRange(fromId: number, toId?: number | null) {
-    let query = 'SELECT * FROM ocr_process WHERE book_page_id >= ? AND deleted = 0';
+    let query =
+      'SELECT * FROM ocr_process WHERE book_page_id >= ? AND deleted = 0';
     const params: any[] = [fromId];
 
     if (toId) {
@@ -70,18 +136,24 @@ export class OcrProcessesService {
       params.push(toId);
     } else {
       query += ' AND book_page_id = ?';
-      // params.push(fromId); // Already added as the first param for >= but if toId is null, we want exact match for book_page_id
-      // Actually, if toId is null, the requirement says "get 1 record from book_page_id", so book_page_id = fromId.
       params[0] = fromId;
-      query = 'SELECT * FROM ocr_process WHERE book_page_id = ? AND deleted = 0';
+      query =
+        'SELECT * FROM ocr_process WHERE book_page_id = ? AND deleted = 0';
     }
 
-    const { results } = await this.env.DB.prepare(query).bind(...params).all<any>();
+    const { results } = await this.env.DB.prepare(query)
+      .bind(...params)
+      .all<any>();
+    const config = await this.getAiConfig();
 
     let updatedCount = 0;
     for (const row of results) {
       if (row.markdown) {
-        const review = reviewVietnameseMarkdown(row.markdown);
+        const review = await reviewVietnameseMarkdown(
+          row.markdown,
+          this.env.AI,
+          config.cfModel
+        );
         await this.env.DB.prepare(
           'UPDATE ocr_process SET review = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         )
@@ -95,27 +167,7 @@ export class OcrProcessesService {
   }
 
   async processBatch() {
-    // 1. Fetch config
-    const { results: configs } = await this.env.DB.prepare(
-      "SELECT * FROM config WHERE key IN ('OPENROUTER_API_KEY', 'AI_MODEL') AND active = 1 AND deleted = 0"
-    ).all<any>();
-
-    let apiKey = '';
-    let model = '';
-
-    for (const config of configs) {
-      if (config.key === 'OPENROUTER_API_KEY' && config.value) {
-        apiKey = decrypt(
-          config.value,
-          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
-        );
-      } else if (config.key === 'AI_MODEL' && config.value) {
-        model = decrypt(
-          config.value,
-          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
-        );
-      }
-    }
+    const { apiKey, model, cfModel } = await this.getAiConfig();
 
     if (!apiKey || !model) {
       throw new Error('Missing OPENROUTER_API_KEY or AI_MODEL config');
@@ -147,7 +199,13 @@ export class OcrProcessesService {
 
     for (const result of results) {
       if (result.status === 'success') {
-        const review = result.markdown ? reviewVietnameseMarkdown(result.markdown) : null;
+        const review = result.markdown
+          ? await reviewVietnameseMarkdown(
+              result.markdown,
+              this.env.AI,
+              cfModel
+            )
+          : null;
         const ocrProcess = await this.env.DB.prepare(
           'INSERT INTO ocr_process (book_page_id, markdown, status, review) VALUES (?, ?, ?, ?) RETURNING id'
         )
@@ -179,3 +237,4 @@ export class OcrProcessesService {
     };
   }
 }
+

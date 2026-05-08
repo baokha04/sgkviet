@@ -21,6 +21,7 @@ The project is a Cloudflare Workers application built with Hono and D1 Database.
 - `src/utils/crypto.ts`: Cryptography utilities (3DES) for sensitive configuration data.
 - `src/utils/crawler.ts`: Utilities for fetching and parsing book data (HTML, images, total pages).
 - `src/utils/string.ts`: String manipulation utilities (e.g., generating non-accented Vietnamese strings).
+- `src/utils/vietnamese.ts`: Vietnamese review utility (AI-enhanced spell check and linguistic analysis using Cloudflare Workers AI).
 - `migrations/`: D1 database schema definitions.
 - `wrangler.jsonc`: Cloudflare Workers configuration.
 
@@ -42,6 +43,7 @@ The project is a Cloudflare Workers application built with Hono and D1 Database.
 | `GET` | `/ocr_processes` | List all non-deleted OCR processes. |
 | `POST` | `/ocr_processes` | Create a new OCR process result. |
 | `POST` | `/ocr_processes/upsert` | Update or insert an OCR process by `book_page_id`. |
+| `POST` | `/ocr_processes/review-range` | Review OCR processes in a range of `book_page_id`. |
 | `PUT` | `/ocr_processes/{id}` | Update an OCR process record. |
 | `DELETE` | `/ocr_processes/{id}` | Soft delete an OCR process record. |
 | `GET` | `/ocr_fails` | List all non-deleted OCR failures. |
@@ -54,7 +56,7 @@ The project is a Cloudflare Workers application built with Hono and D1 Database.
 ### Database Schema (D1)
 - **`book`**: Metadata for textbooks (title, description, URL).
 - **`book_page`**: Individual pages associated with a book.
-- **`ocr_process`**: Results of OCR processing (markdown, status).
+- **`ocr_process`**: Results of OCR processing (markdown, status, review).
 - **`ocr_fail`**: Error logs for failed OCR attempts.
 - **`config`**: Key-value pairs for application settings (values are 3DES encrypted).
 
@@ -81,12 +83,14 @@ graph TD
     Handler -->|Query| D1[D1 Database]
     Handler -->|Crypto Utilities| Crypto[3DES Encryption]
     Handler -->|Crawler| Crawler[HTML Fetch & Parse]
+    Handler -->|Vietnamese Review| Viet[Cloudflare AI Vietnamese Review]
     D1 -.->|SQL Results| Handler
     Handler -->|JSON Response| Client
 
     subgraph "Internal Services"
         Crypto
         Crawler
+        Viet
     end
 
     subgraph "Storage"

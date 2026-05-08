@@ -2,3 +2,4 @@ node_modules/
 .agent/
 .wrangler/
 .turbo/
+scratch/
