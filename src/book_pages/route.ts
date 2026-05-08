@@ -85,4 +85,83 @@ bookPagesRoute.openapi(
   }
 );
 
+bookPagesRoute.openapi(
+  createRoute({
+    method: 'get',
+    path: '/find-id',
+    request: {
+      query: z.object({
+        book_id: z.coerce.number().openapi({ description: 'Book ID' }),
+        page_id: z.coerce.number().openapi({ description: 'Page number' })
+      })
+    },
+    responses: {
+      200: {
+        content: {
+          'application/json': { schema: z.object({ id: z.number() }) }
+        },
+        description: 'Find book page ID'
+      },
+      404: {
+        content: {
+          'application/json': { schema: z.object({ error: z.string() }) }
+        },
+        description: 'Book page not found'
+      }
+    }
+  }),
+  async (c) => {
+    const { book_id, page_id } = c.req.valid('query');
+    const service = new BookPagesService(c.env);
+    const result = await service.findIdByBookAndPage(book_id, page_id);
+
+    if (!result) {
+      return c.json({ error: 'Book page not found' }, 404);
+    }
+
+    return c.json(result, 200);
+  }
+);
+
+bookPagesRoute.openapi(
+  createRoute({
+    method: 'patch',
+    path: '/{id}/ocr-process',
+    request: {
+      params: IdSchema,
+      body: {
+        content: {
+          'application/json': {
+            schema: z.object({ ocr_process_id: z.number() })
+          }
+        }
+      }
+    },
+    responses: {
+      200: {
+        content: { 'application/json': { schema: BookPageSchema } },
+        description: 'Update book page OCR process ID'
+      },
+      404: {
+        content: {
+          'application/json': { schema: z.object({ error: z.string() }) }
+        },
+        description: 'Book page not found'
+      }
+    }
+  }),
+  async (c) => {
+    const { id } = c.req.valid('param');
+    const { ocr_process_id } = await c.req.json();
+    const service = new BookPagesService(c.env);
+    const result = await service.updateOcrProcessId(id, ocr_process_id);
+
+    if (!result) {
+      return c.json({ error: 'Book page not found' }, 404);
+    }
+
+    return c.json(result as any, 200);
+  }
+);
+
 export { bookPagesRoute };

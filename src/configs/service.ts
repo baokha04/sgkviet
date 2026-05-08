@@ -68,5 +68,10 @@ export class ConfigsService {
       .bind(id)
       .run();
   }
+
+  async decryptValue(encryptedValue: string, encryptionKey?: string) {
+    const key = encryptionKey || 'default-secret-key-12345678';
+    return decrypt(encryptedValue, key);
+  }
 }
 

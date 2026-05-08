@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { Env } from '../types';
 import { IdSchema } from '../common/schema';
-import { OcrProcessSchema, OcrProcessBatchResponseSchema } from './schema';
+import { OcrProcessSchema, OcrProcessBatchResponseSchema, OcrReviewRangeSchema, OcrReviewRangeResponseSchema } from './schema';
 import { OcrProcessesService } from './service';
 
 const ocrProcessesRoute = new OpenAPIHono<{ Bindings: Env }>();
@@ -130,6 +130,54 @@ ocrProcessesRoute.openapi(
     } catch (e: any) {
       return c.json({ error: e.message }, 500);
     }
+  }
+);
+
+ocrProcessesRoute.openapi(
+  createRoute({
+    method: 'post',
+    path: '/upsert',
+    request: {
+      body: { content: { 'application/json': { schema: OcrProcessSchema } } }
+    },
+    responses: {
+      200: {
+        content: { 'application/json': { schema: OcrProcessSchema } },
+        description: 'Upsert OCR process'
+      },
+      201: {
+        content: { 'application/json': { schema: OcrProcessSchema } },
+        description: 'Created OCR process'
+      }
+    }
+  }),
+  async (c) => {
+    const body = await c.req.json();
+    const service = new OcrProcessesService(c.env);
+    const result = await service.upsertByBookPageId(body);
+    return c.json(result as any, 200);
+  }
+);
+
+ocrProcessesRoute.openapi(
+  createRoute({
+    method: 'post',
+    path: '/review-range',
+    request: {
+      body: { content: { 'application/json': { schema: OcrReviewRangeSchema } } }
+    },
+    responses: {
+      200: {
+        content: { 'application/json': { schema: OcrReviewRangeResponseSchema } },
+        description: 'Review OCR processes in a range'
+      }
+    }
+  }),
+  async (c) => {
+    const { from_book_page_id, to_book_page_id } = c.req.valid('json');
+    const service = new OcrProcessesService(c.env);
+    const result = await service.reviewRange(from_book_page_id, to_book_page_id);
+    return c.json(result, 200);
   }
 );
 

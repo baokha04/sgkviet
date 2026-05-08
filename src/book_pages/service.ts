@@ -54,4 +54,22 @@ export class BookPagesService {
       .bind(id)
       .run();
   }
+
+  async findIdByBookAndPage(bookId: number, pageNumber: number) {
+    const result = await this.env.DB.prepare(
+      'SELECT id FROM book_page WHERE book_id = ? AND page_number = ? AND deleted = 0'
+    )
+      .bind(bookId, pageNumber)
+      .first<{ id: number }>();
+    return result;
+  }
+
+  async updateOcrProcessId(id: string, ocrProcessId: number) {
+    const result = await this.env.DB.prepare(
+      'UPDATE book_page SET ocr_process_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0 RETURNING *'
+    )
+      .bind(ocrProcessId, id)
+      .first();
+    return result;
+  }
 }

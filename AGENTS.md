@@ -35,10 +35,13 @@ The project is a Cloudflare Workers application built with Hono and D1 Database.
 | `POST` | `/configs` | Create a new config (encrypted). |
 | `DELETE` | `/configs/{id}` | Soft delete a config. |
 | `GET` | `/book_pages` | List all non-deleted book pages. Supports filtering by `book_id`, `from_page`, `to_page`. |
+| `GET` | `/book_pages/find-id` | Find a book page ID by `book_id` and `page_id`. |
+| `PATCH` | `/book_pages/{id}/ocr-process` | Update the `ocr_process_id` of a book page. |
 | `POST` | `/book_pages` | Create a new book page. |
 | `DELETE` | `/book_pages/{id}` | Soft delete a book page. |
 | `GET` | `/ocr_processes` | List all non-deleted OCR processes. |
 | `POST` | `/ocr_processes` | Create a new OCR process result. |
+| `POST` | `/ocr_processes/upsert` | Update or insert an OCR process by `book_page_id`. |
 | `PUT` | `/ocr_processes/{id}` | Update an OCR process record. |
 | `DELETE` | `/ocr_processes/{id}` | Soft delete an OCR process record. |
 | `GET` | `/ocr_fails` | List all non-deleted OCR failures. |

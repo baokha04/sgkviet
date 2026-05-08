@@ -1,6 +1,7 @@
 import { Env } from '../types';
 import { decrypt } from '../utils/crypto';
 import { processImagesWithOpenRouter } from '../utils/ocr';
+import { reviewVietnameseMarkdown } from '../utils/vietnamese';
 
 export class OcrProcessesService {
   constructor(private env: Env) {}
@@ -12,11 +13,12 @@ export class OcrProcessesService {
     return results;
   }
 
-  async create(data: { book_page_id: number; markdown?: string | null; status: string; }) {
+  async create(data: { book_page_id: number; markdown?: string | null; status: string; review?: string | null; }) {
+    const review = data.review || (data.markdown ? reviewVietnameseMarkdown(data.markdown) : null);
     const result = await this.env.DB.prepare(
-      'INSERT INTO ocr_process (book_page_id, markdown, status) VALUES (?, ?, ?) RETURNING *'
+      'INSERT INTO ocr_process (book_page_id, markdown, status, review) VALUES (?, ?, ?, ?) RETURNING *'
     )
-      .bind(data.book_page_id, data.markdown || null, data.status)
+      .bind(data.book_page_id, data.markdown || null, data.status, review)
       .first();
 
     if (!result) {
@@ -26,11 +28,12 @@ export class OcrProcessesService {
     return result;
   }
 
-  async update(id: string, data: { book_page_id: number; markdown?: string | null; status: string; }) {
+  async update(id: string, data: { book_page_id: number; markdown?: string | null; status: string; review?: string | null; }) {
+    const review = data.review || (data.markdown ? reviewVietnameseMarkdown(data.markdown) : null);
     const result = await this.env.DB.prepare(
-      'UPDATE ocr_process SET book_page_id = ?, markdown = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0 RETURNING *'
+      'UPDATE ocr_process SET book_page_id = ?, markdown = ?, status = ?, review = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0 RETURNING *'
     )
-      .bind(data.book_page_id, data.markdown || null, data.status, id)
+      .bind(data.book_page_id, data.markdown || null, data.status, review, id)
       .first();
 
     return result;
@@ -42,6 +45,53 @@ export class OcrProcessesService {
     )
       .bind(id)
       .run();
+  }
+
+  async upsertByBookPageId(data: { book_page_id: number; markdown?: string | null; status: string; review?: string | null; }) {
+    const existing = await this.env.DB.prepare(
+      'SELECT id FROM ocr_process WHERE book_page_id = ? AND deleted = 0'
+    )
+      .bind(data.book_page_id)
+      .first<{ id: number }>();
+
+    if (existing) {
+      return await this.update(existing.id.toString(), data);
+    } else {
+      return await this.create(data);
+    }
+  }
+
+  async reviewRange(fromId: number, toId?: number | null) {
+    let query = 'SELECT * FROM ocr_process WHERE book_page_id >= ? AND deleted = 0';
+    const params: any[] = [fromId];
+
+    if (toId) {
+      query += ' AND book_page_id <= ?';
+      params.push(toId);
+    } else {
+      query += ' AND book_page_id = ?';
+      // params.push(fromId); // Already added as the first param for >= but if toId is null, we want exact match for book_page_id
+      // Actually, if toId is null, the requirement says "get 1 record from book_page_id", so book_page_id = fromId.
+      params[0] = fromId;
+      query = 'SELECT * FROM ocr_process WHERE book_page_id = ? AND deleted = 0';
+    }
+
+    const { results } = await this.env.DB.prepare(query).bind(...params).all<any>();
+
+    let updatedCount = 0;
+    for (const row of results) {
+      if (row.markdown) {
+        const review = reviewVietnameseMarkdown(row.markdown);
+        await this.env.DB.prepare(
+          'UPDATE ocr_process SET review = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        )
+          .bind(review, row.id)
+          .run();
+        updatedCount++;
+      }
+    }
+
+    return { total: results.length, updated: updatedCount };
   }
 
   async processBatch() {
@@ -97,10 +147,11 @@ export class OcrProcessesService {
 
     for (const result of results) {
       if (result.status === 'success') {
+        const review = result.markdown ? reviewVietnameseMarkdown(result.markdown) : null;
         const ocrProcess = await this.env.DB.prepare(
-          'INSERT INTO ocr_process (book_page_id, markdown, status) VALUES (?, ?, ?) RETURNING id'
+          'INSERT INTO ocr_process (book_page_id, markdown, status, review) VALUES (?, ?, ?, ?) RETURNING id'
         )
-          .bind(result.id, result.markdown, 'success')
+          .bind(result.id, result.markdown, 'success', review)
           .first<any>();
 
         if (ocrProcess) {

@@ -14,3 +14,13 @@ export const KeySchema = z.object({
   key: z.string().openapi({ param: { name: 'key', in: 'path' }, example: 'MY_KEY' })
 });
 
+export const DecryptRequestSchema = z.object({
+  value: z.string(),
+  key: z.string().optional()
+});
+
+export const DecryptResponseSchema = z.object({
+  decrypted: z.string()
+});
+
+

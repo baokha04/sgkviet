@@ -135,3 +135,4 @@ configsRoute.openapi(
 );
 
 export { configsRoute };
+
