@@ -2,7 +2,10 @@ import { Env } from '../types';
 import { createAiChain } from '../ai';
 import { processOcrBatch } from '../utils/ocr';
 import { reviewVietnameseMarkdown } from '../utils/vietnamese';
-import { generateEmbedding, generateBatchEmbeddings } from '../utils/embeddings';
+import {
+  generateEmbedding,
+  generateBatchEmbeddings
+} from '../utils/embeddings';
 import { VectorService } from './vector_service';
 import { OcrProcess, Config, BookPage } from '../db/types';
 
@@ -22,7 +25,7 @@ export class OcrProcessesService {
       "SELECT * FROM config WHERE key IN ('AI_MODEL', 'CF_AI_MODEL') AND active = 1 AND deleted = 0"
     ).all<Config>();
 
-    let googleModel = 'gemini-2.0-flash';
+    let googleModel = 'gemini-2.5-flash';
     let cfModel = '@cf/meta/llama-3-8b-instruct';
 
     for (const config of configs) {
@@ -68,7 +71,7 @@ export class OcrProcessesService {
       try {
         const vectorService = new VectorService(this.env.VECTOR_INDEX);
         const embedding = await generateEmbedding(
-          this.env.AI,
+          this.env,
           result.markdown,
           undefined
         );
@@ -108,7 +111,7 @@ export class OcrProcessesService {
       try {
         const vectorService = new VectorService(this.env.VECTOR_INDEX);
         const embedding = await generateEmbedding(
-          this.env.AI,
+          this.env,
           result.markdown,
           undefined
         );
@@ -182,10 +185,7 @@ export class OcrProcessesService {
     let updatedCount = 0;
     for (const row of results) {
       if (row.markdown) {
-        const review = await reviewVietnameseMarkdown(
-          row.markdown,
-          aiChain
-        );
+        const review = await reviewVietnameseMarkdown(row.markdown, aiChain);
         await this.env.DB.prepare(
           'UPDATE ocr_process SET review = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         )
@@ -258,7 +258,8 @@ export class OcrProcessesService {
   }
 
   async reindexAll(fromId?: number, toId?: number) {
-    let query = 'SELECT id, book_page_id, markdown FROM ocr_process WHERE status = "success" AND markdown IS NOT NULL AND deleted = 0';
+    let query =
+      'SELECT id, book_page_id, markdown FROM ocr_process WHERE status = "success" AND markdown IS NOT NULL AND deleted = 0';
     const params: any[] = [];
 
     if (fromId !== undefined) {
@@ -271,7 +272,9 @@ export class OcrProcessesService {
       }
     }
 
-    const { results } = await this.env.DB.prepare(query).bind(...params).all<OcrProcess>();
+    const { results } = await this.env.DB.prepare(query)
+      .bind(...params)
+      .all<OcrProcess>();
 
     const vectorService = new VectorService(this.env.VECTOR_INDEX);
     let indexedCount = 0;
@@ -280,29 +283,31 @@ export class OcrProcessesService {
 
     for (let i = 0; i < results.length; i += batchSize) {
       const batch = results.slice(i, i + batchSize);
-      const ids = batch.map(r => r.id.toString());
-      
+      const ids = batch.map((r) => r.id.toString());
+
       try {
         // 1. Check which IDs already exist in Vectorize
         const existingVectors = await vectorService.getByIds(ids);
-        const existingIds = new Set(existingVectors.map(v => v.id));
-        
+        const existingIds = new Set(existingVectors.map((v) => v.id));
+
         // 2. Filter out records that already exist
-        const missingBatch = batch.filter(r => !existingIds.has(r.id.toString()));
-        
+        const missingBatch = batch.filter(
+          (r) => !existingIds.has(r.id.toString())
+        );
+
         if (missingBatch.length === 0) {
           skippedCount += batch.length;
           continue;
         }
 
         // 3. Process only missing records
-        const texts = missingBatch.map(r => r.markdown || '');
+        const texts = missingBatch.map((r) => r.markdown || '');
         const embeddings = await generateBatchEmbeddings(
-          this.env.AI,
+          this.env,
           texts,
           undefined
         );
-        
+
         const vectors = missingBatch.map((row, index) => {
           const markdown = row.markdown || '';
           return {
@@ -310,52 +315,57 @@ export class OcrProcessesService {
             values: embeddings[index],
             metadata: {
               book_page_id: row.book_page_id,
-              markdown: markdown.length > 8000 ? markdown.substring(0, 8000) + '...' : markdown
+              markdown:
+                markdown.length > 8000
+                  ? markdown.substring(0, 8000) + '...'
+                  : markdown
             }
           };
         });
 
         await this.env.VECTOR_INDEX.upsert(vectors);
         indexedCount += missingBatch.length;
-        skippedCount += (batch.length - missingBatch.length);
+        skippedCount += batch.length - missingBatch.length;
       } catch (error) {
         console.error(`Failed to process batch starting at ${i}:`, error);
       }
     }
 
-    return { 
-      total: results.length, 
-      indexed: indexedCount, 
-      skipped: skippedCount 
+    return {
+      total: results.length,
+      indexed: indexedCount,
+      skipped: skippedCount
     };
   }
 
   async listVectors(limit: number = 10, cursor?: string) {
     const offset = cursor ? parseInt(cursor) : 0;
-    
+
     // Get IDs from D1 since Vectorize binding doesn't support listing yet
     const { results } = await this.env.DB.prepare(
       'SELECT id FROM ocr_process WHERE deleted = 0 LIMIT ? OFFSET ?'
     )
       .bind(limit, offset)
       .all<any>();
-    
-    const ids = results.map(r => r.id.toString());
-    
+
+    const ids = results.map((r) => r.id.toString());
+
     if (ids.length === 0) {
       return { items: [], nextCursor: undefined };
     }
-    
+
     const vectorService = new VectorService(this.env.VECTOR_INDEX);
     const vectors = await vectorService.getByIds(ids);
-    
-    const nextCursor = results.length === limit ? (offset + limit).toString() : undefined;
-    
-    const items = vectors.map(v => ({
+
+    const nextCursor =
+      results.length === limit ? (offset + limit).toString() : undefined;
+
+    const items = vectors.map((v) => ({
       id: v.id,
       metadata: v.metadata as any
     }));
-    
+
     return { items, nextCursor };
   }
 }
+

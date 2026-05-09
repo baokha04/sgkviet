@@ -46,7 +46,7 @@ chatRoute.openapi(
       // 1. Generate embedding for query
       console.log('Generating embedding...');
       const queryEmbedding = await generateEmbedding(
-        c.env.AI,
+        c.env,
         query,
         undefined
       );

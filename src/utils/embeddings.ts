@@ -1,19 +1,29 @@
+import { Env } from '../types';
+import { ConfigsService } from '../configs/service';
+
 export async function generateEmbedding(
-  ai: any,
+  env: Env,
   text: string,
-  model: string = '@cf/baai/bge-base-en-v1.5',
+  model?: string,
   gatewayId?: string
 ) {
-  const result = await generateBatchEmbeddings(ai, [text], model, gatewayId);
+  const result = await generateBatchEmbeddings(env, [text], model, gatewayId);
   return result[0];
 }
 
 export async function generateBatchEmbeddings(
-  ai: any,
+  env: Env,
   texts: string[],
-  model: string = '@cf/baai/bge-base-en-v1.5',
+  model?: string,
   gatewayId?: string
 ) {
+  let modelToUse = model;
+  if (!modelToUse) {
+    const configsService = new ConfigsService(env);
+    const config = await configsService.findByKey('EMBEDDING_MODEL');
+    modelToUse = config?.value || '@cf/baai/bge-base-en-v1.5';
+  }
+
   const options: any = {};
   if (gatewayId) {
     options.gateway = {
@@ -23,13 +33,13 @@ export async function generateBatchEmbeddings(
     };
   }
 
-  const result = await ai.run(
-    model,
+  const result = await env.AI.run(
+    modelToUse as '@cf/baai/bge-base-en-v1.5',
     {
       text: texts
     },
     options
   );
-  return result.data;
+  return (result as any).data;
 }
 

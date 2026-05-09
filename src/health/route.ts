@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { Env } from '../types';
 import { GatewayAiProvider, CloudflareAiProvider } from '../ai';
+import { ConfigsService } from '../configs/service';
 
 const healthRoute = new OpenAPIHono<{ Bindings: Env }>();
 
@@ -85,12 +86,28 @@ healthRoute.openapi(
       google_ai_key: !!env.GOOGLE_AI_KEY
     };
 
+    let googleModel = 'google-ai-studio/gemini-2.5-flash';
+    let workersModel = '@cf/meta/llama-3-8b-instruct';
+    
+    try {
+      if (env.DB) {
+        const configsService = new ConfigsService(env);
+        const [googleModelConfig, workersModelConfig] = await Promise.all([
+          configsService.findByKey('AI_MODEL'),
+          configsService.findByKey('CF_AI_MODEL')
+        ]);
+        if (googleModelConfig?.value) googleModel = googleModelConfig.value;
+        if (workersModelConfig?.value) workersModel = workersModelConfig.value;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch models from config, using defaults', err);
+    }
+
     // Build probe tasks — run all in parallel
     const probes: Promise<z.infer<typeof ProviderStatusSchema>>[] = [];
 
     // Probe Gateway AI via provider
     if (env.GOOGLE_AI_KEY) {
-      const googleModel = 'google-ai-studio/gemini-2.5-flash';
       probes.push(
         probeProvider('gateway', googleModel, async () => {
           const provider = new GatewayAiProvider(
@@ -109,7 +126,6 @@ healthRoute.openapi(
 
     // Probe Cloudflare Workers AI via provider
     if (env.AI) {
-      const workersModel = '@cf/meta/llama-3-8b-instruct';
       probes.push(
         probeProvider('cloudflare', workersModel, async () => {
           const provider = new CloudflareAiProvider(env.AI, workersModel, 0);
