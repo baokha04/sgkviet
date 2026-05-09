@@ -208,6 +208,12 @@ ocrProcessesRoute.openapi(
           }
         },
         description: 'List vectors from the index'
+      },
+      500: {
+        content: {
+          'application/json': { schema: z.object({ error: z.string() }) }
+        },
+        description: 'Server error'
       }
     }
   }),

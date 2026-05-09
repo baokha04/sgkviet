@@ -3,18 +3,23 @@ import { Env } from '../types';
 import { ChatService } from './service';
 import { VectorService } from '../ocr_processes/vector_service';
 import { generateEmbedding } from '../utils/embeddings';
+import { createAiChain } from '../ai';
 
 const chatRoute = new OpenAPIHono<{ Bindings: Env }>();
 
 const ChatRequestSchema = z.object({
-  query: z.string().openapi({ example: 'Trong sách giáo khoa có bài thơ nào không?' }),
+  query: z
+    .string()
+    .openapi({ example: 'Trong sách giáo khoa có bài thơ nào không?' }),
   session_id: z.string().optional().openapi({ example: 'session-123' }),
-  stream: z.boolean().optional().default(true)
+  stream: z.boolean().optional().default(false)
 });
 
 const ChatResponseSchema = z.object({
   response: z.string(),
-  session_id: z.string().optional()
+  session_id: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional()
 });
 
 chatRoute.openapi(
@@ -31,7 +36,7 @@ chatRoute.openapi(
       }
     }
   }),
-  async (c) => {
+  async (c: any) => {
     try {
       const { query, session_id, stream } = c.req.valid('json');
       console.log('Chat request:', { query, session_id, stream });
@@ -40,7 +45,11 @@ chatRoute.openapi(
 
       // 1. Generate embedding for query
       console.log('Generating embedding...');
-      const queryEmbedding = await generateEmbedding(c.env.AI, query);
+      const queryEmbedding = await generateEmbedding(
+        c.env.AI,
+        query,
+        undefined
+      );
       console.log('Embedding generated.');
 
       // 2. Search Vectorize
@@ -48,14 +57,16 @@ chatRoute.openapi(
       const matches = await vectorService.query(queryEmbedding, 5);
       console.log('Vectorize matches:', matches.length);
       const context = matches
-        .map(m => `Book Page ${m.metadata.book_page_id}:\n${m.metadata.markdown}`)
+        .map(
+          (m) => `Book Page ${m.metadata.book_page_id}:\n${m.metadata.markdown}`
+        )
         .join('\n\n---\n\n');
 
       // 3. Get History
       let history: any[] = [];
       if (session_id) {
         const logs = await chatService.getHistory(session_id, 10);
-        history = logs.map(log => ({
+        history = logs.map((log) => ({
           role: log.role,
           content: log.content
         }));
@@ -68,7 +79,7 @@ chatRoute.openapi(
         content: query
       });
 
-      // 5. Generate Response with LLM
+      // 5. Generate Response with AI Provider Chain
       const systemPrompt = `You are a helpful assistant for Vietnamese textbooks. 
 Use the following context to answer the user's question. 
 If the answer is not in the context, say you don't know based on the provided materials.
@@ -77,67 +88,31 @@ Always respond in Vietnamese.
 Context:
 ${context}`;
 
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        ...history,
-        { role: 'user', content: query }
-      ];
+      const fullPrompt = history.length > 0
+        ? history.map((h) => `${h.role}: ${h.content}`).join('\n') + '\nuser: ' + query
+        : query;
 
-      const llmModel = '@cf/meta/llama-3-8b-instruct';
+      const aiChain = createAiChain(c.env);
+      const aiResponse = await aiChain.chat({
+        system: systemPrompt,
+        prompt: fullPrompt
+      });
 
-      if (stream) {
-        const responseStream = await c.env.AI.run(llmModel, {
-          messages,
-          stream: true
-        });
+      await chatService.saveMessage({
+        session_id,
+        role: 'assistant',
+        content: aiResponse.text
+      });
 
-        let fullResponse = '';
-        const [s1, s2] = responseStream.tee();
-
-        c.executionCtx.waitUntil((async () => {
-          const reader = s2.getReader();
-          const decoder = new TextDecoder();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                if (data === '[DONE]') break;
-                try {
-                  const json = JSON.parse(data);
-                  if (json.response) fullResponse += json.response;
-                } catch (e) {}
-              }
-            }
-          }
-          await chatService.saveMessage({
-            session_id,
-            role: 'assistant',
-            content: fullResponse
-          });
-        })());
-
-        return new Response(s1, {
-          headers: { 'Content-Type': 'text/event-stream' }
-        });
-      } else {
-        const aiResponse = await c.env.AI.run(llmModel, { messages });
-        const assistantContent = aiResponse.response;
-
-        await chatService.saveMessage({
+      return c.json(
+        {
+          response: aiResponse.text,
           session_id,
-          role: 'assistant',
-          content: assistantContent
-        });
-
-        return c.json({
-          response: assistantContent,
-          session_id
-        }, 200);
-      }
+          provider: aiResponse.provider,
+          model: aiResponse.model
+        },
+        200
+      );
     } catch (error: any) {
       console.error('Chat error:', error);
       return c.json({ error: error.message, stack: error.stack }, 500);

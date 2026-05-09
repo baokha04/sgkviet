@@ -1,5 +1,4 @@
 import { Env } from '../types';
-import { encrypt, decrypt } from '../utils/crypto';
 
 export class ConfigsService {
   constructor(private env: Env) {}
@@ -23,16 +22,10 @@ export class ConfigsService {
   }
 
   async create(data: { key: string; value?: string | null; active?: boolean }) {
-    const encryptedValue = data.value
-      ? encrypt(
-          data.value,
-          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
-        )
-      : null;
     const result = await this.env.DB.prepare(
       'INSERT INTO config (key, value, active) VALUES (?, ?, ?) RETURNING *'
     )
-      .bind(data.key, encryptedValue, data.active ?? true)
+      .bind(data.key, data.value ?? null, data.active ?? true)
       .first();
 
     if (!result) {
@@ -46,16 +39,10 @@ export class ConfigsService {
     id: string,
     data: { key: string; value?: string | null; active?: boolean }
   ) {
-    const encryptedValue = data.value
-      ? encrypt(
-          data.value,
-          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
-        )
-      : null;
     const result = await this.env.DB.prepare(
       'UPDATE config SET key = ?, value = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0 RETURNING *'
     )
-      .bind(data.key, encryptedValue, data.active ?? true, id)
+      .bind(data.key, data.value ?? null, data.active ?? true, id)
       .first();
 
     return result;
@@ -69,9 +56,9 @@ export class ConfigsService {
       .run();
   }
 
-  async decryptValue(encryptedValue: string, encryptionKey?: string) {
-    const key = encryptionKey || 'default-secret-key-12345678';
-    return decrypt(encryptedValue, key);
+  async decryptValue(encryptedValue: string, _encryptionKey?: string) {
+    // No longer encrypting, just return the value
+    return encryptedValue;
   }
 }
 

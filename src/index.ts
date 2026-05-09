@@ -10,6 +10,7 @@ import { ocrProcessesRoute } from './ocr_processes/route';
 import { ocrFailsRoute } from './ocr_fails/route';
 import { crawlRoute } from './crawl/route';
 import { chatRoute } from './chat/route';
+import { healthRoute } from './health/route';
 
 const app = new OpenAPIHono<{ Bindings: Env }>();
 
@@ -21,6 +22,7 @@ app.route('/ocr_processes', ocrProcessesRoute);
 app.route('/ocr_fails', ocrFailsRoute);
 app.route('/crawl', crawlRoute);
 app.route('/chat', chatRoute);
+app.route('/health', healthRoute);
 
 // Swagger
 app.doc('/doc', {

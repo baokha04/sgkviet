@@ -1,6 +1,6 @@
 import { Env } from '../types';
-import { decrypt } from '../utils/crypto';
-import { processImagesWithOpenRouter } from '../utils/ocr';
+import { createAiChain } from '../ai';
+import { processOcrBatch } from '../utils/ocr';
 import { reviewVietnameseMarkdown } from '../utils/vietnamese';
 import { generateEmbedding, generateBatchEmbeddings } from '../utils/embeddings';
 import { VectorService } from './vector_service';
@@ -16,35 +16,30 @@ export class OcrProcessesService {
     return results;
   }
 
-  private async getAiConfig() {
+  /** Get model overrides from D1 config table. */
+  private async getModelConfig() {
     const { results: configs } = await this.env.DB.prepare(
-      "SELECT * FROM config WHERE key IN ('OPENROUTER_API_KEY', 'AI_MODEL', 'CF_AI_MODEL') AND active = 1 AND deleted = 0"
+      "SELECT * FROM config WHERE key IN ('AI_MODEL', 'CF_AI_MODEL') AND active = 1 AND deleted = 0"
     ).all<Config>();
 
-    let apiKey = '';
-    let model = '';
-    let cfModel = '@cf/google/gemma-4-26b-a4b-it';
+    let googleModel = 'gemini-2.0-flash';
+    let cfModel = '@cf/meta/llama-3-8b-instruct';
 
     for (const config of configs) {
-      if (config.key === 'OPENROUTER_API_KEY' && config.value) {
-        apiKey = decrypt(
-          config.value,
-          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
-        );
-      } else if (config.key === 'AI_MODEL' && config.value) {
-        model = decrypt(
-          config.value,
-          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
-        );
+      if (config.key === 'AI_MODEL' && config.value) {
+        googleModel = config.value;
       } else if (config.key === 'CF_AI_MODEL' && config.value) {
-        cfModel = decrypt(
-          config.value,
-          this.env.ENCRYPTION_KEY || 'default-secret-key-12345678'
-        );
+        cfModel = config.value;
       }
     }
 
-    return { apiKey, model, cfModel };
+    return { googleModel, cfModel };
+  }
+
+  /** Create the AI provider chain with model overrides from config. */
+  private async getAiChain() {
+    const { googleModel, cfModel } = await this.getModelConfig();
+    return createAiChain(this.env, { googleModel, cfModel });
   }
 
   async create(data: {
@@ -55,12 +50,8 @@ export class OcrProcessesService {
   }) {
     let review = data.review;
     if (!review && data.markdown) {
-      const config = await this.getAiConfig();
-      review = await reviewVietnameseMarkdown(
-        data.markdown,
-        this.env.AI,
-        config.cfModel
-      );
+      const aiChain = await this.getAiChain();
+      review = await reviewVietnameseMarkdown(data.markdown, aiChain);
     }
     const result = await this.env.DB.prepare(
       'INSERT INTO ocr_process (book_page_id, markdown, status, review) VALUES (?, ?, ?, ?) RETURNING *'
@@ -76,7 +67,11 @@ export class OcrProcessesService {
     if (result.status === 'success' && result.markdown) {
       try {
         const vectorService = new VectorService(this.env.VECTOR_INDEX);
-        const embedding = await generateEmbedding(this.env.AI, result.markdown);
+        const embedding = await generateEmbedding(
+          this.env.AI,
+          result.markdown,
+          undefined
+        );
         await vectorService.upsert(result.id.toString(), embedding, {
           book_page_id: result.book_page_id,
           markdown: result.markdown
@@ -100,12 +95,8 @@ export class OcrProcessesService {
   ) {
     let review = data.review;
     if (!review && data.markdown) {
-      const config = await this.getAiConfig();
-      review = await reviewVietnameseMarkdown(
-        data.markdown,
-        this.env.AI,
-        config.cfModel
-      );
+      const aiChain = await this.getAiChain();
+      review = await reviewVietnameseMarkdown(data.markdown, aiChain);
     }
     const result = await this.env.DB.prepare(
       'UPDATE ocr_process SET book_page_id = ?, markdown = ?, status = ?, review = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0 RETURNING *'
@@ -116,7 +107,11 @@ export class OcrProcessesService {
     if (result && result.status === 'success' && result.markdown) {
       try {
         const vectorService = new VectorService(this.env.VECTOR_INDEX);
-        const embedding = await generateEmbedding(this.env.AI, result.markdown);
+        const embedding = await generateEmbedding(
+          this.env.AI,
+          result.markdown,
+          undefined
+        );
         await vectorService.upsert(result.id.toString(), embedding, {
           book_page_id: result.book_page_id,
           markdown: result.markdown
@@ -182,15 +177,14 @@ export class OcrProcessesService {
     const { results } = await this.env.DB.prepare(query)
       .bind(...params)
       .all<OcrProcess>();
-    const config = await this.getAiConfig();
+    const aiChain = await this.getAiChain();
 
     let updatedCount = 0;
     for (const row of results) {
       if (row.markdown) {
         const review = await reviewVietnameseMarkdown(
           row.markdown,
-          this.env.AI,
-          config.cfModel
+          aiChain
         );
         await this.env.DB.prepare(
           'UPDATE ocr_process SET review = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
@@ -205,13 +199,9 @@ export class OcrProcessesService {
   }
 
   async processBatch() {
-    const { apiKey, model, cfModel } = await this.getAiConfig();
+    const aiChain = await this.getAiChain();
 
-    if (!apiKey || !model) {
-      throw new Error('Missing OPENROUTER_API_KEY or AI_MODEL config');
-    }
-
-    // 2. Query pending pages
+    // Query pending pages
     const { results: pendingPages } = await this.env.DB.prepare(
       'SELECT id, image_url FROM book_page WHERE ocr_process_id IS NULL AND image_url IS NOT NULL AND deleted = 0 LIMIT 5'
     ).all<BookPage>();
@@ -220,17 +210,13 @@ export class OcrProcessesService {
       return { processed_pages: 0, success_count: 0, failure_count: 0 };
     }
 
-    // 3. Process
+    // Process with provider chain
     const pagesPayload = pendingPages.map((p: any) => ({
       id: p.id,
       imageUrl: p.image_url
     }));
 
-    const results = await processImagesWithOpenRouter(
-      pagesPayload,
-      apiKey,
-      model
-    );
+    const results = await processOcrBatch(pagesPayload, aiChain);
 
     let successCount = 0;
     let failureCount = 0;
@@ -238,11 +224,7 @@ export class OcrProcessesService {
     for (const result of results) {
       if (result.status === 'success') {
         const review = result.markdown
-          ? await reviewVietnameseMarkdown(
-              result.markdown,
-              this.env.AI,
-              cfModel
-            )
+          ? await reviewVietnameseMarkdown(result.markdown, aiChain)
           : null;
         const ocrProcess = await this.env.DB.prepare(
           'INSERT INTO ocr_process (book_page_id, markdown, status, review) VALUES (?, ?, ?, ?) RETURNING id'
@@ -315,7 +297,11 @@ export class OcrProcessesService {
 
         // 3. Process only missing records
         const texts = missingBatch.map(r => r.markdown || '');
-        const embeddings = await generateBatchEmbeddings(this.env.AI, texts);
+        const embeddings = await generateBatchEmbeddings(
+          this.env.AI,
+          texts,
+          undefined
+        );
         
         const vectors = missingBatch.map((row, index) => {
           const markdown = row.markdown || '';
@@ -373,4 +359,3 @@ export class OcrProcessesService {
     return { items, nextCursor };
   }
 }
-

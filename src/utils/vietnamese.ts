@@ -1,4 +1,4 @@
-import { chatWithCloudflare } from './ocr';
+import { AiProviderChain } from '../ai';
 
 /**
  * Heuristic-based Vietnamese review.
@@ -50,19 +50,22 @@ Output Format: Please present the results in a clear table with the following co
 Constraint: After the table, provide a Refined Version of the entire text that is 100% natural, formal, and grammatically correct Vietnamese.`;
 
 /**
- * Enhanced Vietnamese review using Cloudflare Workers AI.
- * Falls back to heuristic if AI binding is not provided.
+ * Enhanced Vietnamese review using AI provider chain.
+ * Falls back to heuristic if AI is not available.
  */
 export async function reviewVietnameseMarkdown(
   markdown: string,
-  ai?: any,
-  model: string = '@cf/meta/llama-3-8b-instruct'
+  aiChain?: AiProviderChain
 ): Promise<string | null> {
   if (!markdown) return null;
 
-  if (ai) {
+  if (aiChain) {
     try {
-      return await chatWithCloudflare(VIETNAMESE_REVIEW_PROMPT, markdown, ai, model);
+      const response = await aiChain.chat({
+        system: VIETNAMESE_REVIEW_PROMPT,
+        prompt: markdown
+      });
+      return response.text;
     } catch (error) {
       console.error('AI Review failed, falling back to heuristic:', error);
     }

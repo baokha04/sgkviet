@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
-  ENCRYPTION_KEY: string;
-  AI: any;
+  AI: Ai;
   VECTOR_INDEX: VectorizeIndex;
+  GOOGLE_AI_KEY: { get(): Promise<string> };
+  CF_AIG_TOKEN: string;
 }

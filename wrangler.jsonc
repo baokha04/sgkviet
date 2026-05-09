@@ -4,12 +4,21 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-05-01",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "sgkviet-db",
       "database_id": "6db1cea6-b81f-46fb-812c-5a7f9994546f",
       "migrations_dir": "migrations"
+    }
+  ],
+  "secrets_store_secrets": [
+    {
+      "binding": "GOOGLE_AI_KEY",
+      "store_id": "3dc321f4e8b846cd80ee85efaadbe707",
+      "secret_name": "sgkviet-gateway_google-ai-studio_gemini"
     }
   ],
   "ai": {
